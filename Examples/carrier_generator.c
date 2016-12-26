@@ -11,7 +11,20 @@ Usage:
 
 References:
     https://www.raspberrypi.org/wp-content/uploads/2012/02/BCM2835-ARM-Peripherals.pdf
+        Section 6 General Purpose I/O (GPIO)
+        Pages:
+            - 90 (Register View)
+            - 92 (GPIO Alternate function select register 0)
+            - 105 (General Purpose GPIO Clocks, MASH dividers)
+            - 107 (Clock Manager General Purpose Clock Control)
+            - 108 (Clock Manager General Purpose Clock Divisors)
+
     https://github.com/raspberrypi/userland/blob/master/host_applications/linux/libs/bcm_host/bcm_host.c
+        Functions:
+            - unsigned bcm_host_get_peripheral_address(void)
+            - unsigned bcm_host_get_peripheral_size(void)
+            - unsigned bcm_host_get_sdram_address(void)
+
     https://pinout.xyz/pinout/pin7_gpio4
 
 License:
