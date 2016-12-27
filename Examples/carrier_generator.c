@@ -172,7 +172,7 @@ void set_gp_func(unsigned int pin, GP_FUNCTION function){
     }
 }
 
-void reset_clk_generator(CM_GPCLK gpclk_number, CM_SRC clk_source){
+void stop_clk_generator(CM_GPCLK gpclk_number, CM_SRC clk_source){
     check_peripheral_map();                                     // Always check if peripherals are mapped before access to them
     unsigned reg_ctl[] = CM_CTL;                                // Init array of pointer to CM_CTL registers addresses
 
@@ -186,7 +186,7 @@ void start_clk_generator(CM_GPCLK gpclk_number, uint32_t clock_divisor, CM_SRC c
     unsigned reg_ctl[] = CM_CTL;                                        // Init array of pointer to CM_CTL registers addresses
     unsigned reg_div[] = CM_DIV;                                        // Init array of pointer to CM_DIV registers addresses
 
-    reset_clk_generator(gpclk_number, clk_source);                      // Disable clock generator before any changes
+    stop_clk_generator(gpclk_number, clk_source);                      // Disable clock generator before any changes
 
     SET(reg_div[gpclk_number], CM_PASSWD | clock_divisor);              // Set frequency divisor
     SET(reg_ctl[gpclk_number], CM_PASSWD | mash_stage | clk_source);    // Set source and MASH
@@ -206,16 +206,21 @@ void set_clk_frequency(CM_GPCLK gpclk_number, uint32_t frequency){
 void exit_handler(int signum){
     puts("Cleaning resources...");
     set_gp_func(4, GP_OUTPUT);                  // Set GPIO4 as output
-    reset_clk_generator(CM_GPCLK0, CM_PLLD);    // Disable clock generator
+    stop_clk_generator(CM_GPCLK0, CM_PLLD);    // Disable clock generator
     exit(signum);                               // Close program
 }
 
 // Set exit program handler
-void set_signal_handler(void (*handler)(int)){
-    if (signal(SIGQUIT, handler) == SIG_ERR)    // Set SIGQUIT signal handler to reset gpio on exit
-        puts("Signal (SIGQUIT) error");
-    if (signal(SIGINT, handler) == SIG_ERR)     // Set SIGINT signal handler to reset gpio on exit
-        puts("Signal (SIGINT) error");
+void set_signal_handler(int signum, void (*handler)(int)){
+    if (signal(signum, handler) == SIG_ERR)         // Set handler to passed signal
+        printf("Set signal (%d) error", signum);
+}
+
+// Set handler to clean resources on exit signal
+void run_forever(){
+    set_signal_handler(SIGQUIT, exit_handler);      // Set SIGQUIT signal handler to reset gpio on exit
+    set_signal_handler(SIGINT,  exit_handler);      // Set SIGINT  signal handler to reset gpio on exit
+    pause();                                        // Wait for signals
 }
 
 int main(int argc, char **argv){
@@ -230,9 +235,8 @@ int main(int argc, char **argv){
     set_gp_func(4, GP_AF0);                        // Set GPIO4 [pin 7] as clock (Alternative Function 0)
     set_clk_frequency(CM_GPCLK0, carrier_frequency);  // Set the clock frequency to GPCLK0 (because we are using GPIO4 [pin 7])
 
-    set_signal_handler(exit_handler);              // Set handler to clean resources on exit signal
     printf("Transmitting carrier on %d Hz\n", carrier_frequency);
-    while(1);                                      // Run forever
+    run_forever();                                 // Run forever
 
     return 0;
 }
