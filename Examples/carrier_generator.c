@@ -15,7 +15,7 @@ Usage:
         ctrl-c
 
 References:
-    https://www.raspberrypi.org/wp-content/uploads/2012/02/BCM2835-ARM-Peripherals.pdf
+    https://github.com/raspberrypi/documentation/raw/master/hardware/raspberrypi/bcm2835/BCM2835-ARM-Peripherals.pdf
         Section 6 General Purpose I/O (GPIO)
         Pages:
             - 90 (Register View)
