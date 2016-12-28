@@ -126,7 +126,7 @@ void* MAP_ADDRESS = NULL;       // Global variable where peripherals map address
 
 
 // Map a physical address in the virtual address space of this process
-void* memory_map(unsigned address, size_t size) {
+void* map_memory(unsigned address, size_t size) {
 
     int fd = open("/dev/mem", O_RDWR | O_SYNC);     // Open /dev/mem to map the physical address
     if (fd < 0){                                    // Check if open is failed
@@ -148,22 +148,22 @@ void* memory_map(unsigned address, size_t size) {
 void map_peripheral(){
     unsigned peripheral_address = bcm_host_get_peripheral_address();  // Broadcom function to get peripheral address (so it support any Raspberry Pi version)
     unsigned peripheral_size = bcm_host_get_peripheral_size();        // Broadcom function to get peripheral size
-    MAP_ADDRESS = memory_map(peripheral_address, peripheral_size);    // Map peripheral memory
+    MAP_ADDRESS = map_memory(peripheral_address, peripheral_size);    // Map peripheral memory
 }
 
 // Check if peripherals are mapped
-void check_peripheral_map(){
+void check_peripheral(){
     if (!MAP_ADDRESS)
         map_peripheral();
 }
 
 void reg_set(unsigned address, uint32_t value){
-    check_peripheral_map();
+    check_peripheral();
     SET(address, value);
 }
 
 uint32_t reg_get(unsigned address){
-    check_peripheral_map();
+    check_peripheral();
     return GET(address);
 }
 
