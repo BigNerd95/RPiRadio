@@ -18,14 +18,14 @@ References:
     https://github.com/raspberrypi/documentation/raw/master/hardware/raspberrypi/bcm2835/BCM2835-ARM-Peripherals.pdf
         Section 6 General Purpose I/O (GPIO)
         Pages:
-            - 90 (Register View)
-            - 92 (GPIO Alternate function select register 0)
+            -  90 (Register View)
+            -  92 (GPIO Alternate function select register 0)
             - 105 (General Purpose GPIO Clocks, MASH dividers)
             - 107 (Clock Manager General Purpose Clock Control)
             - 108 (Clock Manager General Purpose Clock Divisors)
 
     https://github.com/raspberrypi/userland/blob/master/host_applications/linux/libs/bcm_host/bcm_host.c
-        Functions to allow compatibility on RPi 1 and successors:
+        Broadcom functions to get physical addresses to allow compatibility on RPi 1 and successors:
             - unsigned bcm_host_get_peripheral_address(void)
             - unsigned bcm_host_get_peripheral_size(void)
             - unsigned bcm_host_get_sdram_address(void)
@@ -44,14 +44,17 @@ Author:
 #include <stdio.h>              // Input/Output functions
 #include <stdint.h>             // Integer types having specified widths
 #include <unistd.h>             // Function pause to wait for signals
+#include <time.h>               // Function nanosleep
 #include <fcntl.h>              // Function open
 #include <sys/types.h>          // Sometimes needed by fcntl
 #include <sys/stat.h>           // Sometimes needed by fcntl
 #include <sys/mman.h>           // Function mmap
 
 
-// Physical peripheral base addresses
-#define BASE_ADDRESS 0x7E000000
+// All the following addresses are BUS addresses
+
+// Peripheral BUS base address
+#define BUS_BASE_ADDRESS 0x7E000000
 
 // General Purpose I/O function select registers
 const unsigned GPFSEL[] = {
@@ -77,15 +80,15 @@ typedef enum {
 
 // Clock Manager General Purpose Clocks Control registers
 const unsigned CM_GPCTL[] = {
-    0x7E101070,    // CM_GP0CTL (GPCLK0) Control register [Alternative Functoin 0 (GP_AF0) of GPIO4 (pin  7)]
-    0x7E101078,    // CM_GP1CTL (GPCLK1) Control register [Alternative Functoin 0 (GP_AF0) of GPIO5 (pin 29)] (not used in this example)
-    0x7E101080     // CM_GP2CTL (GPCLK2) Control register [Alternative Functoin 0 (GP_AF0) of GPIO6 (pin 31)] (not used in this example)
+    0x7E101070,    // CM_GP0CTL (GPCLK0) Control register [Alternative Function 0 (GP_AF0) of GPIO4 (pin  7)]
+    0x7E101078,    // CM_GP1CTL (GPCLK1) Control register [Alternative Function 0 (GP_AF0) of GPIO5 (pin 29)] (not used in this example)
+    0x7E101080     // CM_GP2CTL (GPCLK2) Control register [Alternative Function 0 (GP_AF0) of GPIO6 (pin 31)] (not used in this example)
 };
 // Clock Manager General Purpose Clock Divisors registers
 const unsigned CM_GPDIV[] = {
-    0x7E101074,    // CM_GP0DIV (GPCLK0) Divisor register [Alternative Functoin 0 (GP_AF0) of GPIO4 (pin  7)]
-    0x7E10107C,    // CM_GP1DIV (GPCLK1) Divisor register [Alternative Functoin 0 (GP_AF0) of GPIO5 (pin 29)] (not used in this example)
-    0x7E101084     // CM_GP2DIV (GPCLK2) Divisor register [Alternative Functoin 0 (GP_AF0) of GPIO6 (pin 31)] (not used in this example)
+    0x7E101074,    // CM_GP0DIV (GPCLK0) Divisor register [Alternative Function 0 (GP_AF0) of GPIO4 (pin  7)]
+    0x7E10107C,    // CM_GP1DIV (GPCLK1) Divisor register [Alternative Function 0 (GP_AF0) of GPIO5 (pin 29)] (not used in this example)
+    0x7E101084     // CM_GP2DIV (GPCLK2) Divisor register [Alternative Function 0 (GP_AF0) of GPIO6 (pin 31)] (not used in this example)
 };
 // Clock Managers General Purpose Clocks
 typedef enum {
@@ -118,12 +121,44 @@ typedef enum {
 
 #define PLLDFREQ     500000000. // PLLD clock source frequency (500MHz)
 
+void* VIRTUAL_BASE_ADDRESS = NULL;       // Global variable where peripherals virtual base address will be contained after mapping physical address
+#define CONVERT(address)    ((unsigned) (address) - BUS_BASE_ADDRESS + VIRTUAL_BASE_ADDRESS)  // convert BUS address to virtual address
+#define SET(address, value) ((*(uint32_t*) CONVERT(address)) = (value))          // set value to BUS address
+#define GET(address)        (*(uint32_t*) CONVERT(address))                      // get value from BUS address
 
-void* MAP_ADDRESS = NULL;       // Global variable where peripherals map address will be contained
-#define CONVERT(address)    ((unsigned) (address) - BASE_ADDRESS + MAP_ADDRESS)  // convert physical address to virtual address
-#define SET(address, value) ((*(uint32_t*) CONVERT(address)) = (value))          // set value to physical address
-#define GET(address)        (*(uint32_t*) CONVERT(address))                      // get value from physical address
 
+// Delay granularity
+typedef enum {
+    SEC,
+    MILLI,
+    MICRO,
+    NANO
+} granularity;
+
+// Delay with seconds, milliseconds, microseconds and nanoseconds granularity
+int delay(unsigned int value, granularity type){
+    time_t seconds = 0;
+    long nano_seconds = 0;
+    switch(type) {
+        case SEC:
+            seconds = value;
+            break;
+        case MILLI:
+            nano_seconds = value * 1000000;
+            break;
+        case MICRO:
+            nano_seconds = value * 1000;
+            break;
+        case NANO:
+            nano_seconds = value;
+            break;
+    }
+    struct timespec t = {
+        seconds,
+        nano_seconds
+    };
+    return nanosleep(&t, NULL);
+}
 
 // Map a physical address in the virtual address space of this process
 void* map_memory(unsigned address, size_t size) {
@@ -144,37 +179,39 @@ void* map_memory(unsigned address, size_t size) {
     return vaddr;                                   // Return mapped address in this process address space
 }
 
-// Maps the correct peripheral address in the virtual address space of this process
+// Maps the correct peripheral physical address in the virtual address space of this process
 void map_peripheral(){
-    unsigned peripheral_address = bcm_host_get_peripheral_address();  // Broadcom function to get peripheral address (so it support any Raspberry Pi version)
+    unsigned peripheral_address = bcm_host_get_peripheral_address();  // Broadcom function to get peripheral physical address (so it support any Raspberry Pi version)
     unsigned peripheral_size = bcm_host_get_peripheral_size();        // Broadcom function to get peripheral size
-    MAP_ADDRESS = map_memory(peripheral_address, peripheral_size);    // Map peripheral memory
+    VIRTUAL_BASE_ADDRESS = map_memory(peripheral_address, peripheral_size);    // Map peripheral memory
 }
 
-// Check if peripherals are mapped
+// Map peripherals if they are not mapped
 void check_peripheral(){
-    if (!MAP_ADDRESS)
+    if (!VIRTUAL_BASE_ADDRESS)
         map_peripheral();
 }
 
+// Set the value of the given BUS addres
 void reg_set(unsigned address, uint32_t value){
-    check_peripheral();
-    SET(address, value);
+    check_peripheral();             // Check if peripherals are mapped
+    SET(address, value);            // Set the value
 }
 
+// Get the value of the given BUS address
 uint32_t reg_get(unsigned address){
-    check_peripheral();
-    return GET(address);
+    check_peripheral();             // Check if peripherals are mapped
+    return GET(address);            // Get the value
 }
 
 // Set gpio pin function (pin number is in BCM format)
 void set_gp_func(unsigned int pin, GP_FUNCTION function){
     if (pin >= 0 && pin <= 53){
-        unsigned int reg_number = pin / FLAGS_PER_REGISTER;     // calculate register number
-        unsigned int pin_number = pin % FLAGS_PER_REGISTER;     // calculate pin number of this register
+        unsigned int reg_number = pin / FLAGS_PER_REGISTER;     // Calculate register number
+        unsigned int pin_number = pin % FLAGS_PER_REGISTER;     // Calculate pin number of this register
 
         uint32_t value = reg_get(GPFSEL[reg_number]);           // Get GPFSELn register value
-        value &= ~(   0b111 << 3 * pin_number);                 // Seroes out the 3 bits of this pin
+        value &= ~(   0b111 << 3 * pin_number);                 // Zeroes out the 3 bits relative to this pin
         value |=  (function << 3 * pin_number);                 // Set pin function
         reg_set(GPFSEL[reg_number], value);                     // Set GPFSELn register new value
     } else {
@@ -183,12 +220,15 @@ void set_gp_func(unsigned int pin, GP_FUNCTION function){
     }
 }
 
+// Disable clock generator and wait until busy flag turns off
 void stop_clk_generator(CM_GPCLK gpclk_number, CM_SRC clk_source){
-    while(reg_get(CM_GPCTL[gpclk_number]) & CM_BUSY){                // Unless busy flag turn off
+    while(reg_get(CM_GPCTL[gpclk_number]) & CM_BUSY){                // Unless busy flag turns off
         reg_set(CM_GPCTL[gpclk_number], CM_PASSWD | clk_source);     // Disable clock generator
+        delay(10, MICRO);                                            // Wait some microseconds so the CPU is not overloaded
     }
 }
 
+// Set frequency divisor, source, mash and enable clock generator
 void start_clk_generator(CM_GPCLK gpclk_number, uint32_t clock_divisor, CM_SRC clk_source, CM_MASH mash_stage){
 
     stop_clk_generator(gpclk_number, clk_source);                            // Disable clock generator before any changes
@@ -196,8 +236,9 @@ void start_clk_generator(CM_GPCLK gpclk_number, uint32_t clock_divisor, CM_SRC c
     reg_set(CM_GPDIV[gpclk_number], CM_PASSWD | clock_divisor);              // Set frequency divisor
     reg_set(CM_GPCTL[gpclk_number], CM_PASSWD | mash_stage | clk_source);    // Set source and MASH
 
-    while(!(reg_get(CM_GPCTL[gpclk_number]) & CM_BUSY)){                     // Unless busy flag turn on
+    while(!(reg_get(CM_GPCTL[gpclk_number]) & CM_BUSY)){                     // Unless busy flag turns on
         reg_set(CM_GPCTL[gpclk_number], CM_PASSWD | reg_get(CM_GPCTL[gpclk_number]) | CM_ENAB);  // Enable clock generator
+        delay(10, MICRO);                                                    // Wait some microseconds so the CPU is not overloaded
     }
 }
 
@@ -225,7 +266,7 @@ void set_signal_handler(int signum, void (*handler)(int)){
 void run_forever(){
     set_signal_handler(SIGQUIT, exit_handler);      // Set SIGQUIT signal handler to reset gpio on exit
     set_signal_handler(SIGINT,  exit_handler);      // Set SIGINT  signal handler to reset gpio on exit
-    pause();                                        // Wait for signals (unistd function)
+    pause();                                        // Wait for signals (unistd function), blocked waiting (so the CPU is not overloaded)
 }
 
 int main(int argc, char **argv){
