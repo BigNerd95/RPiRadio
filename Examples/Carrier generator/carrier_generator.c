@@ -1,7 +1,7 @@
 /*
 Goal:
     This example is for educational purposes only, and is fully commented
-    This example only generate a carrier on passed frequency or on default frequency 104.5 MHz
+    This example only generate a carrier on passed frequency or on default frequency 105.0 MHz
     Turn your car radio on and check if there is silence on that frequency
 
 Usage:
@@ -51,10 +51,20 @@ Author:
 #include <sys/mman.h>           // Function mmap
 
 
-// All the following addresses are BUS addresses
+
+/***********************
+* Peripheral constants *
+***********************/
+
+// All the following are BUS addresses
 
 // Peripheral BUS base address
 #define BUS_BASE_ADDRESS 0x7E000000
+
+
+// GPIO constants
+
+#define FLAGS_PER_REGISTER 10    // There are 10 pin flags per register
 
 // General Purpose I/O function select registers
 const unsigned GPFSEL[] = {
@@ -65,7 +75,7 @@ const unsigned GPFSEL[] = {
     0x7E200010,     // GPFSEL4 register, BCM pin 40 to 49 (not used in this example)
     0x7E200014      // GPFSEL5 register, BCM pin 50 to 53 (not used in this example)
 };
-#define FLAGS_PER_REGISTER 10    // There are 10 pin flags per register
+
 // GPIO functions flags (each flag is 3 bit long)
 typedef enum {
     GP_INPUT  = 0b000,
@@ -78,28 +88,35 @@ typedef enum {
     GP_AF5    = 0b010
 } GP_FUNCTION;
 
+
+// CLOCK constants
+
 // Clock Manager General Purpose Clocks Control registers
 const unsigned CM_GPCTL[] = {
     0x7E101070,    // CM_GP0CTL (GPCLK0) Control register [Alternative Function 0 (GP_AF0) of GPIO4 (pin  7)]
     0x7E101078,    // CM_GP1CTL (GPCLK1) Control register [Alternative Function 0 (GP_AF0) of GPIO5 (pin 29)] (not used in this example)
     0x7E101080     // CM_GP2CTL (GPCLK2) Control register [Alternative Function 0 (GP_AF0) of GPIO6 (pin 31)] (not used in this example)
 };
+
 // Clock Manager General Purpose Clock Divisors registers
 const unsigned CM_GPDIV[] = {
     0x7E101074,    // CM_GP0DIV (GPCLK0) Divisor register [Alternative Function 0 (GP_AF0) of GPIO4 (pin  7)]
     0x7E10107C,    // CM_GP1DIV (GPCLK1) Divisor register [Alternative Function 0 (GP_AF0) of GPIO5 (pin 29)] (not used in this example)
     0x7E101084     // CM_GP2DIV (GPCLK2) Divisor register [Alternative Function 0 (GP_AF0) of GPIO6 (pin 31)] (not used in this example)
 };
+
 // Clock Managers General Purpose Clocks
 typedef enum {
     CM_GPCLK0 = 0,
     CM_GPCLK1 = 1,
     CM_GPCLK2 = 2
 } CM_GPCLK;
+
 // Clock Manager flags
 #define CM_PASSWD (0x5A << 24)
 #define CM_ENAB   (1 << 4)
 #define CM_BUSY   (1 << 7)
+
 // Clock Manager Control register mash flags
 typedef enum {
     CM_MASH_INT = (0 << 9),
@@ -107,6 +124,7 @@ typedef enum {
     CM_MASH_2S  = (2 << 9),
     CM_MASH_3S  = (3 << 9)
 } CM_MASH;
+
 // Clock Manager Control register source flags
 typedef enum {
   CM_GND           = 0,
@@ -119,7 +137,10 @@ typedef enum {
   CM_HDMI          = 7
 } CM_SRC;
 
-#define PLLDFREQ     500000000. // PLLD clock source frequency (500MHz)
+#define PLLD_FREQ     500000000.00 // PLLD clock source frequency (500MHz)
+
+
+// Address conversion macro
 
 void* VIRTUAL_BASE_ADDRESS = NULL;       // Global variable where peripherals virtual base address will be contained after mapping physical address
 #define CONVERT(address)    ((unsigned) (address) - BUS_BASE_ADDRESS + VIRTUAL_BASE_ADDRESS)  // convert BUS address to virtual address
@@ -127,38 +148,10 @@ void* VIRTUAL_BASE_ADDRESS = NULL;       // Global variable where peripherals vi
 #define GET(address)        (*(uint32_t*) CONVERT(address))                      // get value from BUS address
 
 
-// Delay granularity
-typedef enum {
-    SEC,
-    MILLI,
-    MICRO,
-    NANO
-} granularity;
 
-// Delay with seconds, milliseconds, microseconds and nanoseconds granularity
-int delay(unsigned int value, granularity type){
-    time_t seconds = 0;
-    long nano_seconds = 0;
-    switch(type) {
-        case SEC:
-            seconds = value;
-            break;
-        case MILLI:
-            nano_seconds = value * 1000000;
-            break;
-        case MICRO:
-            nano_seconds = value * 1000;
-            break;
-        case NANO:
-            nano_seconds = value;
-            break;
-    }
-    struct timespec t = {
-        seconds,
-        nano_seconds
-    };
-    return nanosleep(&t, NULL);
-}
+/***********************
+* Peripheral functions *
+***********************/
 
 // Map a physical address in the virtual address space of this process
 void* map_memory(unsigned address, size_t size) {
@@ -221,39 +214,38 @@ void set_gp_func(unsigned int pin, GP_FUNCTION function){
 }
 
 // Disable clock generator and wait until busy flag turns off
-void stop_clk_generator(CM_GPCLK gpclk_number, CM_SRC clk_source){
-    while(reg_get(CM_GPCTL[gpclk_number]) & CM_BUSY){                // Unless busy flag turns off
-        reg_set(CM_GPCTL[gpclk_number], CM_PASSWD | clk_source);     // Disable clock generator
-        delay(10, MICRO);                                            // Wait some microseconds so the CPU is not overloaded
-    }
+void stop_clock(CM_GPCLK gpclk_number, CM_SRC clk_source){
+    while (reg_get(CM_GPCTL[gpclk_number]) & CM_BUSY)              // Unless busy flag turns off
+        reg_set(CM_GPCTL[gpclk_number], CM_PASSWD | clk_source);   // Disable clock generator
 }
 
 // Set frequency divisor, source, mash and enable clock generator
-void start_clk_generator(CM_GPCLK gpclk_number, uint32_t clock_divisor, CM_SRC clk_source, CM_MASH mash_stage){
-
-    stop_clk_generator(gpclk_number, clk_source);                            // Disable clock generator before any changes
-
-    reg_set(CM_GPDIV[gpclk_number], CM_PASSWD | clock_divisor);              // Set frequency divisor
+void start_clock(CM_GPCLK gpclk_number, CM_SRC clk_source, CM_MASH mash_stage){
+    stop_clock(gpclk_number, clk_source);                                    // Disable clock generator before any changes
     reg_set(CM_GPCTL[gpclk_number], CM_PASSWD | mash_stage | clk_source);    // Set source and MASH
 
-    while(!(reg_get(CM_GPCTL[gpclk_number]) & CM_BUSY)){                     // Unless busy flag turns on
+    while(!(reg_get(CM_GPCTL[gpclk_number]) & CM_BUSY))                                          // Unless busy flag turns on
         reg_set(CM_GPCTL[gpclk_number], CM_PASSWD | reg_get(CM_GPCTL[gpclk_number]) | CM_ENAB);  // Enable clock generator
-        delay(10, MICRO);                                                    // Wait some microseconds so the CPU is not overloaded
-    }
 }
 
 // Set clock generator frequency
-void set_clk_frequency(CM_GPCLK gpclk_number, uint32_t frequency){
-    uint32_t clock_divisor = ((float)(PLLDFREQ / frequency)) * (1 << 12);   // Calculate clock frequency divisor (both integer and fractional part)
-    start_clk_generator(gpclk_number, clock_divisor, CM_PLLD, CM_MASH_1S);  // Set clock_divisor, source PLLD (500MHz), 1-stage MASH (to support fractional divisor) and enable clock generator
+void set_clock_frequency(CM_GPCLK gpclk_number, uint32_t frequency){
+    uint32_t clock_divisor = ((float)(PLLD_FREQ / frequency)) * (1 << 12);   // Calculate clock frequency divisor (both integer and fractional part)
+    reg_set(CM_GPDIV[gpclk_number], CM_PASSWD | clock_divisor);              // Set frequency divisor
 }
+
+
+
+/***************
+* Main program *
+***************/
 
 // Stop clock generator and reset GPIO4 to OUTPUT function
 void exit_handler(int signum){
-    puts("Cleaning resources...");
-    set_gp_func(4, GP_OUTPUT);                      // Set GPIO4 (pin 7) as output
-    stop_clk_generator(CM_GPCLK0, CM_PLLD);         // Disable clock generator
-    exit(signum);                                   // Close process
+    puts("\nCleaning resources...");
+    set_gp_func(4, GP_OUTPUT);        // Set GPIO4 (pin 7) as output
+    stop_clock(CM_GPCLK0, CM_PLLD);   // Disable clock generator
+    exit(signum);                     // Close process
 }
 
 // Set signal handler
@@ -264,22 +256,22 @@ void set_signal_handler(int signum, void (*handler)(int)){
 
 // Set handler to clean resources on exit signals
 void run_forever(){
-    set_signal_handler(SIGQUIT, exit_handler);      // Set SIGQUIT signal handler to reset gpio on exit
-    set_signal_handler(SIGINT,  exit_handler);      // Set SIGINT  signal handler to reset gpio on exit
+    set_signal_handler(SIGQUIT, exit_handler);      // Set SIGQUIT (ctrl-\) signal handler to reset gpio on exit
+    set_signal_handler(SIGINT,  exit_handler);      // Set SIGINT  (ctrl-c) signal handler to reset gpio on exit
     pause();                                        // Wait for signals (unistd function), blocked waiting (so the CPU is not overloaded)
 }
 
 int main(int argc, char **argv){
 
-    uint32_t carrier_frequency = 104500000;             // Default frequency 104.5 MHz
+    uint32_t carrier_frequency = 105000000;             // Default frequency 105.0 MHz
     if (argc > 1)
         carrier_frequency = atoi(argv[1]);              // Parse first argument as frequency if present
 
     set_gp_func(4, GP_AF0);                             // Set GPIO4 (pin 7) as clock (Alternative Function 0)
-    set_clk_frequency(CM_GPCLK0, carrier_frequency);    // Set the clock frequency to GPCLK0 (because we are using GPIO4 [pin 7])
-
+    start_clock(CM_GPCLK0, CM_PLLD, CM_MASH_1S);        // Enable GPCLK0 clock generator (because we are using GPIO4 [pin 7]) using PLLD clock source (500MHz) and 1-stage MASH (to support fractional divisor)
+    set_clock_frequency(CM_GPCLK0, carrier_frequency);  // Set the clock frequency of GPCLK0
     printf("Transmitting carrier on %d Hz\n", carrier_frequency);
-    run_forever();                                      // Keep this process alive
 
+    run_forever();                                      // Keep this process alive
     return 0;
 }
