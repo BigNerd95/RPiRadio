@@ -280,7 +280,7 @@ void busyWaiting(unsigned long nano_seconds){
 
 
 // Delay with seconds, milliseconds, microseconds and nanoseconds granularity
-int delay(unsigned int value, granularity type){
+void delay(unsigned int value, granularity type){
     switch(type) {
         case SEC:
             normalWaiting(value, 0);
@@ -313,7 +313,7 @@ void start_radio(CM_GPCLK gpclk_number, uint32_t carrier_frequency, char* audio_
 
     // Calculate the waiting time between two consecutive samples
     unsigned int waiting_period = ((float) 1.0/sfinfo.samplerate) * 1000000000; // 1,000,000,000 is a second expressed in nanoseconds
-    printf("One sample each %ld nanoseconds\n", waiting_period);
+    printf("One sample each %d nanoseconds\n", waiting_period);
 
     float deviation = 75000; // 75 kHz of deviation from nominal carrier (for 200 kHz FM spacing) [https://en.wikipedia.org/wiki/Frequency_deviation]
     float *sample = (float *) malloc(sfinfo.channels * sizeof(float)); // allocate space to store samples
@@ -323,14 +323,14 @@ void start_radio(CM_GPCLK gpclk_number, uint32_t carrier_frequency, char* audio_
         // regardless of the numer of channels we always get only the first channel (for semplicity now we ignore the second channel)
         int sample_value = round(sample[0] * deviation);  // sample[0] contains a number in range [-1.0, +1.0], so the "max" sample_value will be -deviation or +deviation 
         
-        set_clock_frequency(CM_GPCLK0, carrier_frequency + sample_value); // Let's modulate!
+        set_clock_frequency(gpclk_number, carrier_frequency + sample_value); // Let's modulate!
 
         delay(waiting_period, NANO); // wait the correct time among samples
     }
 
     puts("End of file audio");
 
-    set_clock_frequency(CM_GPCLK0, carrier_frequency);
+    set_clock_frequency(gpclk_number, carrier_frequency);
     sf_close(inf);
     free(sample);
 }
@@ -376,4 +376,3 @@ int main(int argc, char **argv){
     exit_handler(0);
     return 0;
 }
-
