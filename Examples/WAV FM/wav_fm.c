@@ -40,22 +40,20 @@ Author:
     Lorenzo Santina (BigNerd95)
 */
 
-#include <bcm_host.h>           // Broadcom library to support any version of RaspBerry
-#include <stdio.h>              // Input/Output functions
-#include <stdint.h>             // Integer types having specified widths
-#include <unistd.h>             // Function pause to wait for signals
-#include <time.h>               // Function nanosleep
-#include <fcntl.h>              // Function open
-#include <sys/types.h>          // Sometimes needed by fcntl
-#include <sys/stat.h>           // Sometimes needed by fcntl
-#include <sys/mman.h>           // Function mmap
+#include <bcm_host.h>   // Broadcom library to support any version of RaspBerry
+#include <stdio.h>      // Input/Output functions
+#include <stdint.h>     // Integer types having specified widths
+#include <unistd.h>     // Function pause to wait for signals
+#include <time.h>       // Function nanosleep
+#include <fcntl.h>      // Function open
+#include <sys/types.h>  // Sometimes needed by fcntl
+#include <sys/stat.h>   // Sometimes needed by fcntl
+#include <sys/mman.h>   // Function mmap
 
-#include <sys/time.h> 
-
-#include <sndfile.h>
-#include <stdlib.h>
-#include <strings.h>
-#include <math.h>
+#include <sndfile.h>    // Wav sound library 
+#include <stdlib.h>     // Function malloc
+#include <strings.h>    // Function bzero
+#include <math.h>       // Function round
 
 
 
@@ -150,11 +148,8 @@ typedef enum {
 
 // Address conversion macro
 
-void* VIRTUAL_BASE_ADDRESS = NULL;       // Global variable where peripherals virtual base address will be contained after mapping physical address
+unsigned VIRTUAL_BASE_ADDRESS = 0;       // Global variable where peripherals virtual base address will be contained after mapping physical address
 #define CONVERT(address)    ((unsigned) (address) - BUS_BASE_ADDRESS + VIRTUAL_BASE_ADDRESS)  // convert BUS address to virtual address
-#define SET(address, value) ((*(uint32_t*) CONVERT(address)) = (value))          // set value to BUS address
-#define GET(address)        (*(uint32_t*) CONVERT(address))                      // get value from BUS address
-
 
 
 /***********************
@@ -184,7 +179,7 @@ void* map_memory(unsigned address, size_t size) {
 void map_peripheral(){
     unsigned peripheral_address = bcm_host_get_peripheral_address();  // Broadcom function to get peripheral physical address (so it support any Raspberry Pi version)
     unsigned peripheral_size = bcm_host_get_peripheral_size();        // Broadcom function to get peripheral size
-    VIRTUAL_BASE_ADDRESS = map_memory(peripheral_address, peripheral_size);    // Map peripheral memory
+    VIRTUAL_BASE_ADDRESS = (unsigned) map_memory(peripheral_address, peripheral_size);    // Map peripheral memory
 }
 
 // Map peripherals if they are not mapped
@@ -195,19 +190,19 @@ void check_peripheral(){
 
 // Set the value of the given BUS addres
 void reg_set(unsigned address, uint32_t value){
-    check_peripheral();             // Check if peripherals are mapped
-    SET(address, value);            // Set the value
+    check_peripheral();             // Check if peripherals are mapped 
+    (*(uint32_t*) CONVERT(address)) = value; // Set the value
 }
 
 // Get the value of the given BUS address
 uint32_t reg_get(unsigned address){
-    check_peripheral();             // Check if peripherals are mapped
-    return GET(address);            // Get the value
+    check_peripheral();             // Check if peripherals are mapped        
+    return *(uint32_t*) CONVERT(address); // Get the value
 }
 
 // Set gpio pin function (pin number is in BCM format)
 void set_gp_func(unsigned int pin, GP_FUNCTION function){
-    if (pin >= 0 && pin <= 53){
+    if (pin <= 53){
         unsigned int reg_number = pin / FLAGS_PER_REGISTER;     // Calculate register number
         unsigned int pin_number = pin % FLAGS_PER_REGISTER;     // Calculate pin number of this register
 
@@ -311,8 +306,8 @@ void start_radio(CM_GPCLK gpclk_number, uint32_t carrier_frequency, char* audio_
     printf("Audio channels:   %d\n", sfinfo.channels);
     printf("Audio samplerate: %d\n", sfinfo.samplerate);
 
-    // Calculate the waiting time between two consecutive samples
-    unsigned int waiting_period = ((float) 1.0/sfinfo.samplerate) * 1000000000; // 1,000,000,000 is a second expressed in nanoseconds
+    // Calculate the waiting time between two consecutive samples in nanoseconds
+    unsigned int waiting_period = ((double) 1000000000.00/sfinfo.samplerate);  // 1,000,000,000 is a second expressed in nanoseconds
     printf("One sample each %d nanoseconds\n", waiting_period);
 
     float deviation = 75000; // 75 kHz of deviation from nominal carrier (for 200 kHz FM spacing) [https://en.wikipedia.org/wiki/Frequency_deviation]
