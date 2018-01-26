@@ -23,6 +23,7 @@ References:
             - 105 (General Purpose GPIO Clocks, MASH dividers)
             - 107 (Clock Manager General Purpose Clock Control)
             - 108 (Clock Manager General Purpose Clock Divisors)
+            - 172 (System Timer)
 
     https://github.com/raspberrypi/userland/blob/master/host_applications/linux/libs/bcm_host/bcm_host.c
         Broadcom functions to get physical addresses to allow compatibility on RPi 1 and successors:
@@ -44,7 +45,6 @@ Author:
 #include <stdio.h>      // Input/Output functions
 #include <stdint.h>     // Integer types having specified widths
 #include <unistd.h>     // Function pause to wait for signals
-#include <time.h>       // Function nanosleep
 #include <fcntl.h>      // Function open
 #include <sys/types.h>  // Sometimes needed by fcntl
 #include <sys/stat.h>   // Sometimes needed by fcntl
@@ -145,6 +145,14 @@ typedef enum {
 
 #define PLLD_FREQ     500000000.00 // PLLD clock source frequency (500MHz)
 
+// System timer
+#define SYSTMR_CS     0x7E003000
+#define SYSTMR_CLO    0x7E003004
+#define SYSTMR_CHI    0x7E003008
+#define SYSTMR_C0     0x7E00300C
+#define SYSTMR_C1     0x7E003010
+#define SYSTMR_C2     0x7E003014
+#define SYSTMR_C3     0x7E003018
 
 // Address conversion macro
 
@@ -237,59 +245,24 @@ void set_clock_frequency(CM_GPCLK gpclk_number, uint32_t frequency){
     reg_set(CM_GPDIV[gpclk_number], CM_PASSWD | clock_divisor);              // Set frequency divisor
 }
 
+uint32_t readTimerLow(){
+    return reg_get(SYSTMR_CLO);
+}
 
 
 /***************
 * Main program *
 ***************/
 
-// Delay granularity
-typedef enum {
-    SEC,
-    MILLI,
-    MICRO,
-    NANO
-} granularity;
-
-void normalWaiting(time_t seconds, long milli_seconds){
-    struct timespec t = {
-        seconds,
-        milli_seconds * 1000000
-    };
-    nanosleep(&t, NULL); // TODO: check return value
-}
-
-// Raspberry's scheduler minimum sleep time is 100 microseconds, so to have shorter waiting time we need busy waiting
-void busyWaiting(unsigned long nano_seconds){
-    struct timespec start_time, current_time;
-    clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
-
-    unsigned long sec  = nano_seconds / 1000000000;
-    unsigned long nsec = nano_seconds % 1000000000;
+void microSleep(uint32_t micro){
+    uint32_t now, start = readTimerLow();
 
     do {
-        clock_gettime(CLOCK_MONOTONIC_RAW, &current_time);
-    } while ((current_time.tv_sec  - start_time.tv_sec)  < sec ||
-             (current_time.tv_nsec - start_time.tv_nsec) < nsec);
-}
-
-
-// Delay with seconds, milliseconds, microseconds and nanoseconds granularity
-void delay(unsigned int value, granularity type){
-    switch(type) {
-        case SEC:
-            normalWaiting(value, 0);
-            break;
-        case MILLI:
-            normalWaiting(0, value);
-            break;
-        case MICRO:
-            busyWaiting(value * 1000);
-            break;
-        case NANO:
-            busyWaiting(value);
-            break;
-    }
+        now = readTimerLow();
+    } while ( 
+        ((now >= start) && (now - start) < micro) ||
+        ((now <  start) &&  now < (start + micro))
+    );
 }
 
 void start_radio(CM_GPCLK gpclk_number, uint32_t carrier_frequency, char* audio_path){
@@ -297,34 +270,33 @@ void start_radio(CM_GPCLK gpclk_number, uint32_t carrier_frequency, char* audio_
     SF_INFO sfinfo;
     bzero(&sfinfo, sizeof(SF_INFO));
     SNDFILE* inf = sf_open(audio_path, SFM_READ, &sfinfo); // open audio file for reading
-
     if (!inf) {
         puts("Audio file not found");
         return;
     }
-
     printf("Audio channels:   %d\n", sfinfo.channels);
     printf("Audio samplerate: %d\n", sfinfo.samplerate);
 
-    // Calculate the waiting time between two consecutive samples in nanoseconds
-    unsigned int waiting_period = ((double) 1000000000.00/sfinfo.samplerate);  // 1,000,000,000 is a second expressed in nanoseconds
-    printf("One sample each %d nanoseconds\n", waiting_period);
-
     float deviation = 75000; // 75 kHz of deviation from nominal carrier (for 200 kHz FM spacing) [https://en.wikipedia.org/wiki/Frequency_deviation]
     float *sample = (float *) malloc(sfinfo.channels * sizeof(float)); // allocate space to store samples
+    unsigned int waiting_period = round((double) 1000000.00/sfinfo.samplerate);  // Calculate the waiting time between two consecutive samples in microseconds
+    printf("One sample each %d microseconds\n", waiting_period);
 
-    while (sf_readf_float(inf, sample, 1) > 0) { // get ONE sample per time (if there are 2 channels, 2 sample will be read)
+    while (sf_readf_float(inf, sample, 1) > 0) { // get ONE sample PER channel
 
-        // regardless of the numer of channels we always get only the first channel (for semplicity now we ignore the second channel)
-        int sample_value = round(sample[0] * deviation);  // sample[0] contains a number in range [-1.0, +1.0], so the "max" sample_value will be -deviation or +deviation 
+        // convert multi channel audio in mono audio
+        float all_sample_sum = 0;
+        for(int i = 0; i < sfinfo.channels; i++)
+            all_sample_sum += (sample[i] / sfinfo.channels);
+
+        int sample_value = round(all_sample_sum * deviation);  // all_sample_sum contains a number in range [-1.0, +1.0], so the "max" sample_value will be -deviation or +deviation 
         
         set_clock_frequency(gpclk_number, carrier_frequency + sample_value); // Let's modulate!
 
-        delay(waiting_period, NANO); // wait the correct time among samples
+        microSleep(waiting_period);
     }
 
     puts("End of file audio");
-
     set_clock_frequency(gpclk_number, carrier_frequency);
     sf_close(inf);
     free(sample);
